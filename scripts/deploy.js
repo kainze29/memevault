@@ -4,10 +4,10 @@ const { connect, keyStores, utils } = require("near-api-js");
 const fs = require("fs");
 const path = require("path");
 
-const CONTRACT_ID = "memevault-live.testnet";
+const CONTRACT_ID = "memevault-v2.testnet";
 const OWNER_ID = "memevault2026.testnet"; // holds the minted supply (not the contract)
 const FAUCET_AMOUNT = "10000000000000000000000000"; // 10,000,000 MVAULT for judge claims
-const CRED_PATH = path.join(process.env.HOME, ".near-credentials/testnet/memevault-live.testnet.json");
+const CRED_PATH = path.join(process.env.HOME, ".near-credentials/testnet/memevault-v2.testnet.json");
 
 async function main() {
   const cred = JSON.parse(fs.readFileSync(CRED_PATH, "utf8"));

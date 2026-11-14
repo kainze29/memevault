@@ -6,6 +6,9 @@ import { NearBindgen, near, call, view, initialize, LookupMap, Vector } from "ne
 const DECIMALS = 18;
 const TOTAL_SUPPLY = (1000000000n * 10n ** BigInt(DECIMALS)).toString(); // 1e9 MVAULT
 const FEE_BPS = 100n; // 1% of every transfer goes to the treasury
+const BURN_BPS = 500n; // 5% of every duel pot is burned on resolve
+const DIAMOND_BLOCKS = 86400n; // 24h at ~1s/block: no sell in this window = Diamond Hands
+const DIAMOND_MULTIPLIER = 2n; // Diamond Hands: 2x duel winnings (bonus from treasury) + 2x vote weight
 const STORAGE_MIN = 1250000000000000000000n; // 0.00125 NEAR, NEP-122 minimum
 const ONE_YOCTO = 1n;
 
@@ -29,6 +32,8 @@ class MemeVault {
     this.votes = new LookupMap("v");
     this.faucet_pool = "0";
     this.faucet_claimed = new LookupMap("f");
+    this.total_burned = "0";
+    this.last_sell_block = new LookupMap("ls"); // account_id -> block height of last ft_transfer out
   }
 
   @initialize({})
@@ -76,6 +81,30 @@ class MemeVault {
     return this._balance(near.currentAccountId());
   }
 
+  // Diamond Hands: no ft_transfer OUT in the last 24h (86400 blocks), or never sold.
+  // Staking into a duel, claiming from the faucet, and receiving tokens do NOT
+  // touch last_sell_block, so they never break Diamond Hands status.
+  _isDiamondHands(account_id) {
+    const last = this.last_sell_block.get(account_id);
+    if (!last) return true;
+    return BigInt(near.blockHeight()) - toBig(last) >= DIAMOND_BLOCKS;
+  }
+
+  @view({})
+  get_diamond_hands({ account_id }) {
+    const last = this.last_sell_block.get(account_id);
+    const height = BigInt(near.blockHeight());
+    const since = last ? height - toBig(last) : null;
+    return {
+      is_diamond: this._isDiamondHands(account_id),
+      last_sell_block: last || null,
+      blocks_since_sell: since === null ? null : Number(since),
+      blocks_remaining: since === null ? 0 : Number(DIAMOND_BLOCKS > since ? DIAMOND_BLOCKS - since : 0n),
+      diamond_blocks: Number(DIAMOND_BLOCKS),
+      multiplier: Number(DIAMOND_MULTIPLIER),
+    };
+  }
+
   // ---------- NEP-141 core ----------
   @view({})
   ft_metadata() {
@@ -119,6 +148,8 @@ class MemeVault {
       const t = near.currentAccountId();
       this._setBalance(t, (toBig(this._balance(t)) + fee).toString());
     }
+    // Any transfer OUT counts as a sell and (re)starts the Diamond Hands timer.
+    this.last_sell_block.set(sender, BigInt(near.blockHeight()).toString());
   }
 
   // ---------- NEP-122 storage ----------
@@ -205,6 +236,8 @@ class MemeVault {
       duels: this.duel_ids.length,
       proposals: this.proposal_ids.length,
       total_staked: totalStaked.toString(),
+      total_burned: this.total_burned,
+      burn_bps: Number(BURN_BPS),
       fee_bps: Number(FEE_BPS),
       decimals: DECIMALS,
     };
@@ -236,6 +269,7 @@ class MemeVault {
       stakes_b: "0",
       resolved: false,
       winner: null,
+      burned: "0",
       creator: near.predecessorAccountId(),
     };
     this.duels.set(id.toString(), duel);
@@ -272,21 +306,38 @@ class MemeVault {
     const pot = toBig(d.stakes_a) + toBig(d.stakes_b);
     const winner = toBig(d.stakes_a) >= toBig(d.stakes_b) ? "a" : "b";
     const winTotal = winner === "a" ? toBig(d.stakes_a) : toBig(d.stakes_b);
+    // Burn 5% of the pot: supply shrinks every time the community plays.
+    const burned = (pot * BURN_BPS) / 10000n;
+    const distributable = pot - burned;
+    this.total_burned = (toBig(this.total_burned) + burned).toString();
+    this.total_supply = (toBig(this.total_supply) - burned).toString();
     const payouts = [];
     if (pot > 0n && winTotal > 0n) {
       const records = this.stakes.toArray();
       for (const r of records) {
         if (r.duel_id === duel_id && r.side === winner) {
-          const share = (toBig(r.amount) * pot) / winTotal;
-          this._setBalance(r.account_id, (toBig(this._balance(r.account_id)) + share).toString());
-          payouts.push({ account_id: r.account_id, amount: share.toString() });
+          const share = (toBig(r.amount) * distributable) / winTotal;
+          // Diamond Hands winners get 2x: the bonus is paid from the treasury,
+          // never from the pot, and only if the treasury covers the full bonus.
+          let bonus = 0n;
+          if (this._isDiamondHands(r.account_id)) {
+            const treasury = toBig(this.get_treasury_balance());
+            if (treasury >= share) bonus = share;
+          }
+          this._setBalance(r.account_id, (toBig(this._balance(r.account_id)) + share + bonus).toString());
+          if (bonus > 0n) {
+            const t = near.currentAccountId();
+            this._setBalance(t, (toBig(this._balance(t)) - bonus).toString());
+          }
+          payouts.push({ account_id: r.account_id, amount: share.toString(), bonus: bonus.toString(), diamond: bonus > 0n });
         }
       }
     }
     d.resolved = true;
     d.winner = winner;
+    d.burned = burned.toString();
     this.duels.set(duel_id.toString(), d);
-    return { duel: d, payouts };
+    return { duel: d, payouts, burned: burned.toString() };
   }
 
   @view({})
@@ -341,8 +392,10 @@ class MemeVault {
     const caller = near.predecessorAccountId();
     const key = proposal_id.toString() + ":" + caller;
     if (this.votes.get(key)) throw new Error("Already voted on this proposal");
-    const weight = toBig(this._balance(caller));
+    let weight = toBig(this._balance(caller));
     if (weight <= 0n) throw new Error("Need MVAULT balance to vote");
+    // Diamond Hands votes count 2x per token.
+    if (this._isDiamondHands(caller)) weight = weight * DIAMOND_MULTIPLIER;
     if (vote === "yes") p.yes = (toBig(p.yes) + weight).toString();
     else p.no = (toBig(p.no) + weight).toString();
     this.votes.set(key, vote);

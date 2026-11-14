@@ -23,15 +23,16 @@
 <body>
 <h1>🪙 MemeVault</h1>
 <p>A memecoin with mechanics on NEAR testnet. Built at <b>NEAR HACKATHON</b> (Nov 2026).</p>
-<p class="muted">Contract: <code id="contractId">memevault-live.testnet</code> · Network: NEAR testnet ·
+<p class="muted">Contract: <code id="contractId">memevault-v2.testnet</code> · Network: NEAR testnet ·
 <a href="https://github.com/kainze29/memevault" target="_blank">GitHub repo</a> ·
-<a href="https://explorer.testnet.near.org/accounts/memevault-live.testnet" target="_blank">Explorer</a></p>
+<a href="https://explorer.testnet.near.org/accounts/memevault-v2.testnet" target="_blank">Explorer</a></p>
 
 <div class="card">
   <span id="walletStatus">Not connected</span>
   <button id="connectBtn">Connect NEAR Wallet</button>
   <button id="disconnectBtn" class="secondary" style="display:none">Disconnect</button>
   <div id="myBalance" style="margin-top:8px"></div>
+  <div id="diamondBadge" style="margin-top:8px"></div>
   <div style="margin-top:8px">
     <button id="registerBtn" disabled>1. Register storage (0.002 NEAR)</button>
     <button id="faucetBtn" disabled>2. Claim 1,000 MVAULT (free, once)</button>
@@ -51,7 +52,7 @@
 
 <div class="card">
   <h2 style="border:none;padding:0">💸 Transfer MVAULT</h2>
-  <p class="muted">Every transfer pays a 1% fee into the on-chain treasury.</p>
+  <p class="muted">Every transfer pays a 1% fee into the on-chain treasury. A transfer OUT also (re)starts your 24h Diamond Hands timer.</p>
   <input id="toAccount" placeholder="receiver.testnet" size="28">
   <input id="sendAmount" placeholder="amount MVAULT" size="14">
   <button id="sendBtn" disabled>Send</button>
@@ -59,6 +60,7 @@
 
 <div class="card">
   <h2 style="border:none;padding:0">⚔️ Meme Duels</h2>
+  <p class="muted">🔥 5% of every pot is burned on resolve, so MVAULT gets scarcer the more the community plays. 💎 Diamond Hands winners get 2x their share, paid from the treasury.</p>
   <div id="duels">Loading…</div>
   <div style="margin-top:10px">
     <input id="duelA" placeholder="Meme A (e.g. DOGE)" size="18">
@@ -77,7 +79,7 @@
     <input id="propRecipient" placeholder="recipient.testnet" size="20">
     <button id="createPropBtn" disabled>Create proposal</button>
   </div>
-  <p class="muted">Votes are weighted by MVAULT balance. A proposal passes when yes &gt; no after the voting window (default 24h), then anyone can execute it to pay out from the treasury.</p>
+  <p class="muted">Votes are weighted by MVAULT balance. 💎 Diamond Hands votes count 2x. A proposal passes when yes &gt; no after the voting window (default 24h), then anyone can execute it to pay out from the treasury.</p>
 </div>
 
 <div class="card">
@@ -92,7 +94,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/near-api-js@2.1.4/dist/near-api-js.min.js"></script>
 <script>
-const CONTRACT_ID = "memevault-live.testnet";
+const CONTRACT_ID = "memevault-v2.testnet";
 const RPC_URL = "https://rpc.testnet.near.org";
 const DECIMALS = 18n;
 const logEl = document.getElementById("log");
@@ -130,6 +132,7 @@ async function refresh() {
     document.getElementById("stats").innerHTML =
       `<span class="stat">Treasury<b>${fmt(stats.treasury_balance)} MVAULT</b></span>` +
       `<span class="stat">Total supply<b>${fmt(stats.total_supply)}</b></span>` +
+      `<span class="stat">🔥 Total burned<b>${fmt(stats.total_burned)} MVAULT</b></span>` +
       `<span class="stat">Holders<b>${stats.holders}</b></span>` +
       `<span class="stat">Total staked in duels<b>${fmt(stats.total_staked)}</b></span>` +
       `<span class="stat">Faucet pool<b>${fmt(stats.faucet_pool)}</b></span>` +
@@ -145,7 +148,7 @@ async function refresh() {
       const open = !d.resolved && Date.now() < Number(BigInt(d.end_time) / 1000000n);
       return `<div class="card" style="background:#22223a"><b>Duel #${d.id}: ${d.option_a} vs ${d.option_b}</b><br>` +
         `<span class="muted">Ends: ${shortTime(d.end_time)} · Staked A: ${fmt(d.stakes_a)} · B: ${fmt(d.stakes_b)} · ` +
-        (d.resolved ? `Resolved, winner: ${d.winner === "a" ? d.option_a : d.option_b} 🏆` : open ? "OPEN" : "Ended, awaiting resolve") + `</span><br>` +
+        (d.resolved ? `Resolved, winner: ${d.winner === "a" ? d.option_a : d.option_b} 🏆 · Burned: ${fmt(d.burned || "0")} MVAULT 🔥` : open ? "OPEN" : "Ended, awaiting resolve") + `</span><br>` +
         (open ? `Stake: <input id="stakeAmt${d.id}" placeholder="amount" size="8"> ` +
           `<button onclick="joinDuel(${d.id},'a')">Back ${d.option_a}</button> ` +
           `<button onclick="joinDuel(${d.id},'b')">Back ${d.option_b}</button> ` : "") +
@@ -169,6 +172,10 @@ async function refresh() {
       document.getElementById("myBalance").innerHTML =
         `Your balance: <b>${fmt(bal)} MVAULT</b> · Faucet claimed: ${claimed ? "yes" : "no"}`;
       document.getElementById("faucetBtn").disabled = claimed;
+      const dh = await viewFn("get_diamond_hands", { account_id: accountId });
+      document.getElementById("diamondBadge").innerHTML = dh.is_diamond
+        ? `💎 <b>Diamond Hands — 2x duel winnings + 2x vote weight.</b> <span class="muted">No sell in the last 24h. Keep holding to keep the bonus.</span>`
+        : `💎 Not Diamond Hands yet. <span class="muted">You sold recently — hold for ${dh.blocks_remaining.toLocaleString()} more blocks (~${Math.ceil(dh.blocks_remaining / 3600)}h) with no transfer out to unlock 2x duel winnings + 2x vote weight.</span>`;
     }
   } catch (e) { log("refresh error: " + e.message); }
 }
@@ -208,7 +215,7 @@ async function init() {
     ["registerBtn", "sendBtn", "createDuelBtn", "createPropBtn"].forEach((id) => document.getElementById(id).disabled = false);
     document.getElementById("faucetBtn").disabled = false;
     contract = new nearApi.Contract(wallet.account(), CONTRACT_ID, {
-      viewMethods: ["ft_balance_of", "ft_total_supply", "ft_metadata", "get_stats", "get_treasury_balance", "get_leaderboard", "get_duels", "get_duel", "get_proposals", "get_proposal", "get_my_stake", "get_faucet_pool", "has_claimed_faucet", "storage_balance_of"],
+      viewMethods: ["ft_balance_of", "ft_total_supply", "ft_metadata", "get_stats", "get_treasury_balance", "get_leaderboard", "get_duels", "get_duel", "get_proposals", "get_proposal", "get_my_stake", "get_faucet_pool", "has_claimed_faucet", "storage_balance_of", "get_diamond_hands"],
       changeMethods: ["ft_transfer", "storage_deposit", "claim_faucet", "create_duel", "join_duel", "resolve_duel", "create_proposal", "vote", "execute_proposal"],
     });
   }

@@ -2475,6 +2475,18 @@ function currentAccountId() {
   return str(env.read_register(0));
 }
 /**
+ * Returns the current block index.
+ */
+function blockIndex() {
+  return env.block_index();
+}
+/**
+ * Returns the current block height.
+ */
+function blockHeight() {
+  return blockIndex();
+}
+/**
  * Returns the current block timestamp.
  */
 function blockTimestamp() {
@@ -2965,10 +2977,13 @@ function NearBindgen({
   };
 }
 
-var _dec, _dec2, _dec3, _dec4, _dec5, _dec6, _dec7, _dec8, _dec9, _dec0, _dec1, _dec10, _dec11, _dec12, _dec13, _dec14, _dec15, _dec16, _dec17, _dec18, _dec19, _dec20, _dec21, _dec22, _dec23, _dec24, _dec25, _class, _class2;
+var _dec, _dec2, _dec3, _dec4, _dec5, _dec6, _dec7, _dec8, _dec9, _dec0, _dec1, _dec10, _dec11, _dec12, _dec13, _dec14, _dec15, _dec16, _dec17, _dec18, _dec19, _dec20, _dec21, _dec22, _dec23, _dec24, _dec25, _dec26, _class, _class2;
 const DECIMALS = 18;
 const TOTAL_SUPPLY = (1000000000n * 10n ** BigInt(DECIMALS)).toString(); // 1e9 MVAULT
 const FEE_BPS = 100n; // 1% of every transfer goes to the treasury
+const BURN_BPS = 500n; // 5% of every duel pot is burned on resolve
+const DIAMOND_BLOCKS = 86400n; // 24h at ~1s/block: no sell in this window = Diamond Hands
+const DIAMOND_MULTIPLIER = 2n; // Diamond Hands: 2x duel winnings (bonus from treasury) + 2x vote weight
 const STORAGE_MIN = 1250000000000000000000n; // 0.00125 NEAR, NEP-122 minimum
 const ONE_YOCTO = 1n;
 function toBig(s) {
@@ -2976,11 +2991,11 @@ function toBig(s) {
 }
 let MemeVault = (_dec = NearBindgen({
   requireInit: true
-}), _dec2 = initialize(), _dec3 = view(), _dec4 = view(), _dec5 = view(), _dec6 = call({
+}), _dec2 = initialize(), _dec3 = view(), _dec4 = view(), _dec5 = view(), _dec6 = view(), _dec7 = call({
   payableFunction: true
-}), _dec7 = view(), _dec8 = view(), _dec9 = call({
+}), _dec8 = view(), _dec9 = view(), _dec0 = call({
   payableFunction: true
-}), _dec0 = call({}), _dec1 = view(), _dec10 = view(), _dec11 = view(), _dec12 = call({}), _dec13 = view(), _dec14 = view(), _dec15 = call({}), _dec16 = call({}), _dec17 = call({}), _dec18 = view(), _dec19 = view(), _dec20 = view(), _dec21 = call({}), _dec22 = call({}), _dec23 = call({}), _dec24 = view(), _dec25 = view(), _dec(_class = (_class2 = class MemeVault {
+}), _dec1 = call({}), _dec10 = view(), _dec11 = view(), _dec12 = view(), _dec13 = call({}), _dec14 = view(), _dec15 = view(), _dec16 = call({}), _dec17 = call({}), _dec18 = call({}), _dec19 = view(), _dec20 = view(), _dec21 = view(), _dec22 = call({}), _dec23 = call({}), _dec24 = call({}), _dec25 = view(), _dec26 = view(), _dec(_class = (_class2 = class MemeVault {
   constructor() {
     this.owner_id = "";
     this.total_supply = "0";
@@ -2995,6 +3010,8 @@ let MemeVault = (_dec = NearBindgen({
     this.votes = new LookupMap("v");
     this.faucet_pool = "0";
     this.faucet_claimed = new LookupMap("f");
+    this.total_burned = "0";
+    this.last_sell_block = new LookupMap("ls"); // account_id -> block height of last ft_transfer out
   }
   init({
     owner_id,
@@ -3039,6 +3056,30 @@ let MemeVault = (_dec = NearBindgen({
     return this._balance(currentAccountId());
   }
 
+  // Diamond Hands: no ft_transfer OUT in the last 24h (86400 blocks), or never sold.
+  // Staking into a duel, claiming from the faucet, and receiving tokens do NOT
+  // touch last_sell_block, so they never break Diamond Hands status.
+  _isDiamondHands(account_id) {
+    const last = this.last_sell_block.get(account_id);
+    if (!last) return true;
+    return BigInt(blockHeight()) - toBig(last) >= DIAMOND_BLOCKS;
+  }
+  get_diamond_hands({
+    account_id
+  }) {
+    const last = this.last_sell_block.get(account_id);
+    const height = BigInt(blockHeight());
+    const since = last ? height - toBig(last) : null;
+    return {
+      is_diamond: this._isDiamondHands(account_id),
+      last_sell_block: last || null,
+      blocks_since_sell: since === null ? null : Number(since),
+      blocks_remaining: since === null ? 0 : Number(DIAMOND_BLOCKS > since ? DIAMOND_BLOCKS - since : 0n),
+      diamond_blocks: Number(DIAMOND_BLOCKS),
+      multiplier: Number(DIAMOND_MULTIPLIER)
+    };
+  }
+
   // ---------- NEP-141 core ----------
   ft_metadata() {
     return {
@@ -3081,6 +3122,8 @@ let MemeVault = (_dec = NearBindgen({
       const t = currentAccountId();
       this._setBalance(t, (toBig(this._balance(t)) + fee).toString());
     }
+    // Any transfer OUT counts as a sell and (re)starts the Diamond Hands timer.
+    this.last_sell_block.set(sender, BigInt(blockHeight()).toString());
   }
 
   // ---------- NEP-122 storage ----------
@@ -3169,6 +3212,8 @@ let MemeVault = (_dec = NearBindgen({
       duels: this.duel_ids.length,
       proposals: this.proposal_ids.length,
       total_staked: totalStaked.toString(),
+      total_burned: this.total_burned,
+      burn_bps: Number(BURN_BPS),
       fee_bps: Number(FEE_BPS),
       decimals: DECIMALS
     };
@@ -3202,6 +3247,7 @@ let MemeVault = (_dec = NearBindgen({
       stakes_b: "0",
       resolved: false,
       winner: null,
+      burned: "0",
       creator: predecessorAccountId()
     };
     this.duels.set(id.toString(), duel);
@@ -3244,26 +3290,46 @@ let MemeVault = (_dec = NearBindgen({
     const pot = toBig(d.stakes_a) + toBig(d.stakes_b);
     const winner = toBig(d.stakes_a) >= toBig(d.stakes_b) ? "a" : "b";
     const winTotal = winner === "a" ? toBig(d.stakes_a) : toBig(d.stakes_b);
+    // Burn 5% of the pot: supply shrinks every time the community plays.
+    const burned = pot * BURN_BPS / 10000n;
+    const distributable = pot - burned;
+    this.total_burned = (toBig(this.total_burned) + burned).toString();
+    this.total_supply = (toBig(this.total_supply) - burned).toString();
     const payouts = [];
     if (pot > 0n && winTotal > 0n) {
       const records = this.stakes.toArray();
       for (const r of records) {
         if (r.duel_id === duel_id && r.side === winner) {
-          const share = toBig(r.amount) * pot / winTotal;
-          this._setBalance(r.account_id, (toBig(this._balance(r.account_id)) + share).toString());
+          const share = toBig(r.amount) * distributable / winTotal;
+          // Diamond Hands winners get 2x: the bonus is paid from the treasury,
+          // never from the pot, and only if the treasury covers the full bonus.
+          let bonus = 0n;
+          if (this._isDiamondHands(r.account_id)) {
+            const treasury = toBig(this.get_treasury_balance());
+            if (treasury >= share) bonus = share;
+          }
+          this._setBalance(r.account_id, (toBig(this._balance(r.account_id)) + share + bonus).toString());
+          if (bonus > 0n) {
+            const t = currentAccountId();
+            this._setBalance(t, (toBig(this._balance(t)) - bonus).toString());
+          }
           payouts.push({
             account_id: r.account_id,
-            amount: share.toString()
+            amount: share.toString(),
+            bonus: bonus.toString(),
+            diamond: bonus > 0n
           });
         }
       }
     }
     d.resolved = true;
     d.winner = winner;
+    d.burned = burned.toString();
     this.duels.set(duel_id.toString(), d);
     return {
       duel: d,
-      payouts
+      payouts,
+      burned: burned.toString()
     };
   }
   get_duel({
@@ -3324,8 +3390,10 @@ let MemeVault = (_dec = NearBindgen({
     const caller = predecessorAccountId();
     const key = proposal_id.toString() + ":" + caller;
     if (this.votes.get(key)) throw new Error("Already voted on this proposal");
-    const weight = toBig(this._balance(caller));
+    let weight = toBig(this._balance(caller));
     if (weight <= 0n) throw new Error("Need MVAULT balance to vote");
+    // Diamond Hands votes count 2x per token.
+    if (this._isDiamondHands(caller)) weight = weight * DIAMOND_MULTIPLIER;
     if (vote === "yes") p.yes = (toBig(p.yes) + weight).toString();else p.no = (toBig(p.no) + weight).toString();
     this.votes.set(key, vote);
     this.proposals.set(proposal_id.toString(), p);
@@ -3363,7 +3431,7 @@ let MemeVault = (_dec = NearBindgen({
   get_proposals() {
     return this.proposal_ids.toArray().map(id => this.proposals.get(id.toString()));
   }
-}, _applyDecoratedDescriptor(_class2.prototype, "init", [_dec2], Object.getOwnPropertyDescriptor(_class2.prototype, "init"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "ft_metadata", [_dec3], Object.getOwnPropertyDescriptor(_class2.prototype, "ft_metadata"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "ft_total_supply", [_dec4], Object.getOwnPropertyDescriptor(_class2.prototype, "ft_total_supply"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "ft_balance_of", [_dec5], Object.getOwnPropertyDescriptor(_class2.prototype, "ft_balance_of"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "ft_transfer", [_dec6], Object.getOwnPropertyDescriptor(_class2.prototype, "ft_transfer"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "storage_balance_bounds", [_dec7], Object.getOwnPropertyDescriptor(_class2.prototype, "storage_balance_bounds"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "storage_balance_of", [_dec8], Object.getOwnPropertyDescriptor(_class2.prototype, "storage_balance_of"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "storage_deposit", [_dec9], Object.getOwnPropertyDescriptor(_class2.prototype, "storage_deposit"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "storage_unregister", [_dec0], Object.getOwnPropertyDescriptor(_class2.prototype, "storage_unregister"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_treasury_balance", [_dec1], Object.getOwnPropertyDescriptor(_class2.prototype, "get_treasury_balance"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_faucet_pool", [_dec10], Object.getOwnPropertyDescriptor(_class2.prototype, "get_faucet_pool"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "has_claimed_faucet", [_dec11], Object.getOwnPropertyDescriptor(_class2.prototype, "has_claimed_faucet"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "claim_faucet", [_dec12], Object.getOwnPropertyDescriptor(_class2.prototype, "claim_faucet"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_stats", [_dec13], Object.getOwnPropertyDescriptor(_class2.prototype, "get_stats"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_leaderboard", [_dec14], Object.getOwnPropertyDescriptor(_class2.prototype, "get_leaderboard"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "create_duel", [_dec15], Object.getOwnPropertyDescriptor(_class2.prototype, "create_duel"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "join_duel", [_dec16], Object.getOwnPropertyDescriptor(_class2.prototype, "join_duel"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "resolve_duel", [_dec17], Object.getOwnPropertyDescriptor(_class2.prototype, "resolve_duel"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_duel", [_dec18], Object.getOwnPropertyDescriptor(_class2.prototype, "get_duel"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_duels", [_dec19], Object.getOwnPropertyDescriptor(_class2.prototype, "get_duels"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_my_stake", [_dec20], Object.getOwnPropertyDescriptor(_class2.prototype, "get_my_stake"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "create_proposal", [_dec21], Object.getOwnPropertyDescriptor(_class2.prototype, "create_proposal"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "vote", [_dec22], Object.getOwnPropertyDescriptor(_class2.prototype, "vote"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "execute_proposal", [_dec23], Object.getOwnPropertyDescriptor(_class2.prototype, "execute_proposal"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_proposal", [_dec24], Object.getOwnPropertyDescriptor(_class2.prototype, "get_proposal"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_proposals", [_dec25], Object.getOwnPropertyDescriptor(_class2.prototype, "get_proposals"), _class2.prototype), _class2)) || _class);
+}, _applyDecoratedDescriptor(_class2.prototype, "init", [_dec2], Object.getOwnPropertyDescriptor(_class2.prototype, "init"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_diamond_hands", [_dec3], Object.getOwnPropertyDescriptor(_class2.prototype, "get_diamond_hands"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "ft_metadata", [_dec4], Object.getOwnPropertyDescriptor(_class2.prototype, "ft_metadata"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "ft_total_supply", [_dec5], Object.getOwnPropertyDescriptor(_class2.prototype, "ft_total_supply"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "ft_balance_of", [_dec6], Object.getOwnPropertyDescriptor(_class2.prototype, "ft_balance_of"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "ft_transfer", [_dec7], Object.getOwnPropertyDescriptor(_class2.prototype, "ft_transfer"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "storage_balance_bounds", [_dec8], Object.getOwnPropertyDescriptor(_class2.prototype, "storage_balance_bounds"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "storage_balance_of", [_dec9], Object.getOwnPropertyDescriptor(_class2.prototype, "storage_balance_of"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "storage_deposit", [_dec0], Object.getOwnPropertyDescriptor(_class2.prototype, "storage_deposit"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "storage_unregister", [_dec1], Object.getOwnPropertyDescriptor(_class2.prototype, "storage_unregister"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_treasury_balance", [_dec10], Object.getOwnPropertyDescriptor(_class2.prototype, "get_treasury_balance"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_faucet_pool", [_dec11], Object.getOwnPropertyDescriptor(_class2.prototype, "get_faucet_pool"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "has_claimed_faucet", [_dec12], Object.getOwnPropertyDescriptor(_class2.prototype, "has_claimed_faucet"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "claim_faucet", [_dec13], Object.getOwnPropertyDescriptor(_class2.prototype, "claim_faucet"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_stats", [_dec14], Object.getOwnPropertyDescriptor(_class2.prototype, "get_stats"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_leaderboard", [_dec15], Object.getOwnPropertyDescriptor(_class2.prototype, "get_leaderboard"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "create_duel", [_dec16], Object.getOwnPropertyDescriptor(_class2.prototype, "create_duel"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "join_duel", [_dec17], Object.getOwnPropertyDescriptor(_class2.prototype, "join_duel"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "resolve_duel", [_dec18], Object.getOwnPropertyDescriptor(_class2.prototype, "resolve_duel"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_duel", [_dec19], Object.getOwnPropertyDescriptor(_class2.prototype, "get_duel"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_duels", [_dec20], Object.getOwnPropertyDescriptor(_class2.prototype, "get_duels"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_my_stake", [_dec21], Object.getOwnPropertyDescriptor(_class2.prototype, "get_my_stake"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "create_proposal", [_dec22], Object.getOwnPropertyDescriptor(_class2.prototype, "create_proposal"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "vote", [_dec23], Object.getOwnPropertyDescriptor(_class2.prototype, "vote"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "execute_proposal", [_dec24], Object.getOwnPropertyDescriptor(_class2.prototype, "execute_proposal"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_proposal", [_dec25], Object.getOwnPropertyDescriptor(_class2.prototype, "get_proposal"), _class2.prototype), _applyDecoratedDescriptor(_class2.prototype, "get_proposals", [_dec26], Object.getOwnPropertyDescriptor(_class2.prototype, "get_proposals"), _class2.prototype), _class2)) || _class);
 function get_proposals() {
   const _state = MemeVault._getState();
   if (!_state && MemeVault._requireInit()) {
@@ -3699,6 +3767,19 @@ function ft_metadata() {
   const _result = _contract.ft_metadata(_args);
   if (_result !== undefined) if (_result && _result.constructor && _result.constructor.name === "NearPromise") _result.onReturn();else env.value_return(MemeVault._serialize(_result, true));
 }
+function get_diamond_hands() {
+  const _state = MemeVault._getState();
+  if (!_state && MemeVault._requireInit()) {
+    throw new Error("Contract must be initialized");
+  }
+  const _contract = MemeVault._create();
+  if (_state) {
+    MemeVault._reconstruct(_contract, _state);
+  }
+  const _args = MemeVault._getArgs();
+  const _result = _contract.get_diamond_hands(_args);
+  if (_result !== undefined) if (_result && _result.constructor && _result.constructor.name === "NearPromise") _result.onReturn();else env.value_return(MemeVault._serialize(_result, true));
+}
 function init() {
   const _state = MemeVault._getState();
   if (_state) {
@@ -3711,5 +3792,5 @@ function init() {
   if (_result !== undefined) if (_result && _result.constructor && _result.constructor.name === "NearPromise") _result.onReturn();else env.value_return(MemeVault._serialize(_result, true));
 }
 
-export { claim_faucet, create_duel, create_proposal, execute_proposal, ft_balance_of, ft_metadata, ft_total_supply, ft_transfer, get_duel, get_duels, get_faucet_pool, get_leaderboard, get_my_stake, get_proposal, get_proposals, get_stats, get_treasury_balance, has_claimed_faucet, init, join_duel, resolve_duel, storage_balance_bounds, storage_balance_of, storage_deposit, storage_unregister, vote };
+export { claim_faucet, create_duel, create_proposal, execute_proposal, ft_balance_of, ft_metadata, ft_total_supply, ft_transfer, get_diamond_hands, get_duel, get_duels, get_faucet_pool, get_leaderboard, get_my_stake, get_proposal, get_proposals, get_stats, get_treasury_balance, has_claimed_faucet, init, join_duel, resolve_duel, storage_balance_bounds, storage_balance_of, storage_deposit, storage_unregister, vote };
 //# sourceMappingURL=contract.js.map
