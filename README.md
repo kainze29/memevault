@@ -5,7 +5,7 @@
 - **Live demo:** https://kainze29.github.io/memevault/
 - **Contract (NEAR testnet):** [`memevault-live.testnet`](https://explorer.testnet.near.org/accounts/memevault-live.testnet)
 - **Deploy tx:** [`9SgRF74jZNqpL74n9CrrgtGvtMzyAJeZpvNZaEd6xjuG`](https://explorer.testnet.near.org/transactions/9SgRF74jZNqpL74n9CrrgtGvtMzyAJeZpvNZaEd6xjuG)
-- **Init tx:** [`5CrEgu11YoUCCUz9kqGEUyfBg8KQcrBYtXbkDevZH52R`](https://explorer.testnet.near.org/transactions/5CrEgu11YoUCCUz9kqGEUyfBg8KQcrBYtXbkDevZH52R)
+- **Init tx:** [`AeWzouBGNxkfqxkWRTPjn1esV8Nmnvmu9Pw9Wxfbdtmq`](https://explorer.testnet.near.org/transactions/AeWzouBGNxkfqxkWRTPjn1esV8Nmnvmu9Pw9Wxfbdtmq)
 
 ## What it is
 
