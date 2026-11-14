@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MemeVault — a memecoin with mechanics on NEAR</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #0f0f1a; color: #eee; }
+  h1 { color: #ffd23f; } h2 { color: #7ee0ff; border-top: 1px solid #333; padding-top: 16px; }
+  a { color: #7ee0ff; }
+  .card { background: #1a1a2e; border: 1px solid #333; border-radius: 10px; padding: 16px; margin: 12px 0; }
+  .stat { display: inline-block; background: #22223a; border-radius: 8px; padding: 10px 16px; margin: 4px; }
+  .stat b { display: block; font-size: 1.3em; color: #ffd23f; }
+  button { background: #ffd23f; color: #111; border: none; border-radius: 6px; padding: 8px 14px; font-weight: bold; cursor: pointer; margin: 2px; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: #333; color: #eee; }
+  input, select { padding: 8px; border-radius: 6px; border: 1px solid #555; background: #111; color: #eee; margin: 2px; }
+  table { width: 100%; border-collapse: collapse; } td, th { padding: 6px; border-bottom: 1px solid #333; text-align: left; }
+  .muted { color: #999; font-size: 0.9em; }
+  #log { white-space: pre-wrap; background: #111; padding: 10px; border-radius: 8px; font-size: 0.85em; max-height: 200px; overflow: auto; }
+</style>
+</head>
+<body>
+<h1>🪙 MemeVault</h1>
+<p>A memecoin with mechanics on NEAR testnet. Built at <b>NEAR HACKATHON</b> (Nov 2026).</p>
+<p class="muted">Contract: <code id="contractId">memevault-app.testnet</code> · Network: NEAR testnet ·
+<a href="https://github.com/kainze29/memevault" target="_blank">GitHub repo</a> ·
+<a href="https://explorer.testnet.near.org/accounts/memevault-app.testnet" target="_blank">Explorer</a></p>
+
+<div class="card">
+  <span id="walletStatus">Not connected</span>
+  <button id="connectBtn">Connect NEAR Wallet</button>
+  <button id="disconnectBtn" class="secondary" style="display:none">Disconnect</button>
+  <div id="myBalance" style="margin-top:8px"></div>
+  <div style="margin-top:8px">
+    <button id="registerBtn" disabled>1. Register storage (0.002 NEAR)</button>
+    <button id="faucetBtn" disabled>2. Claim 1,000 MVAULT (free, once)</button>
+  </div>
+  <p class="muted">New here? Connect your testnet wallet, register storage, then claim 1,000 free MVAULT from the faucet. Get free testnet NEAR at <a href="https://near-faucet.io" target="_blank">near-faucet.io</a>.</p>
+</div>
+
+<div class="card">
+  <h2 style="border:none;padding:0">Treasury &amp; Stats</h2>
+  <div id="stats">Loading…</div>
+</div>
+
+<div class="card">
+  <h2 style="border:none;padding:0">🏆 Holder Leaderboard</h2>
+  <div id="leaderboard">Loading…</div>
+</div>
+
+<div class="card">
+  <h2 style="border:none;padding:0">💸 Transfer MVAULT</h2>
+  <p class="muted">Every transfer pays a 1% fee into the on-chain treasury.</p>
+  <input id="toAccount" placeholder="receiver.testnet" size="28">
+  <input id="sendAmount" placeholder="amount MVAULT" size="14">
+  <button id="sendBtn" disabled>Send</button>
+</div>
+
+<div class="card">
+  <h2 style="border:none;padding:0">⚔️ Meme Duels</h2>
+  <div id="duels">Loading…</div>
+  <div style="margin-top:10px">
+    <input id="duelA" placeholder="Meme A (e.g. DOGE)" size="18">
+    <input id="duelB" placeholder="Meme B (e.g. PEPE)" size="18">
+    <input id="duelSecs" placeholder="seconds" value="3600" size="8">
+    <button id="createDuelBtn" disabled>Create duel</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="border:none;padding:0">🗳️ Treasury Governance</h2>
+  <div id="proposals">Loading…</div>
+  <div style="margin-top:10px">
+    <input id="propTitle" placeholder="Proposal title" size="22">
+    <input id="propAmount" placeholder="amount MVAULT" size="12">
+    <input id="propRecipient" placeholder="recipient.testnet" size="20">
+    <button id="createPropBtn" disabled>Create proposal</button>
+  </div>
+  <p class="muted">Votes are weighted by MVAULT balance. A proposal passes when yes &gt; no after the voting window (default 24h), then anyone can execute it to pay out from the treasury.</p>
+</div>
+
+<div class="card">
+  <h2 style="border:none;padding:0">📊 NEAR Ecosystem (live)</h2>
+  <div id="nearStats">Loading…</div>
+</div>
+
+<div class="card">
+  <h2 style="border:none;padding:0">Activity log</h2>
+  <div id="log"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/near-api-js@2.1.4/dist/near-api-js.min.js"></script>
+<script>
+const CONTRACT_ID = "memevault-app.testnet";
+const RPC_URL = "https://rpc.testnet.near.org";
+const DECIMALS = 18n;
+const logEl = document.getElementById("log");
+function log(msg) { logEl.textContent += msg + "\n"; logEl.scrollTop = logEl.scrollHeight; }
+function fmt(yocto) { // yocto string -> human MVAULT with 2 decimals
+  const v = BigInt(yocto || "0");
+  const whole = v / (10n ** DECIMALS);
+  const frac = v % (10n ** DECIMALS);
+  return whole.toString() + "." + frac.toString().padStart(18, "0").slice(0, 2);
+}
+function toYocto(str) { // "1.5" -> yocto string
+  const [w, f = ""] = String(str).trim().split(".");
+  return (BigInt(w || "0") * 10n ** DECIMALS + BigInt((f + "0".repeat(18)).slice(0, 18) || "0")).toString();
+}
+function shortTime(ns) { return new Date(Number(BigInt(ns) / 1000000n)).toLocaleString(); }
+
+let near, wallet, provider, contract, accountId = "";
+
+async function viewFn(method, args) {
+  const res = await fetch(RPC_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: "1", method: "query",
+      params: { request_type: "call_function", account_id: CONTRACT_ID, method_name: method,
+        args_base64: btoa(JSON.stringify(args || {})), finality: "final" } }),
+  });
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.message || JSON.stringify(json.error));
+  return JSON.parse(String.fromCharCode(...json.result.result));
+}
+
+async function refresh() {
+  try {
+    const stats = await viewFn("get_stats", {});
+    document.getElementById("stats").innerHTML =
+      `<span class="stat">Treasury<b>${fmt(stats.treasury_balance)} MVAULT</b></span>` +
+      `<span class="stat">Total supply<b>${fmt(stats.total_supply)}</b></span>` +
+      `<span class="stat">Holders<b>${stats.holders}</b></span>` +
+      `<span class="stat">Total staked in duels<b>${fmt(stats.total_staked)}</b></span>` +
+      `<span class="stat">Faucet pool<b>${fmt(stats.faucet_pool)}</b></span>` +
+      `<span class="stat">Duels<b>${stats.duels}</b></span>` +
+      `<span class="stat">Proposals<b>${stats.proposals}</b></span>`;
+    const lb = await viewFn("get_leaderboard", { limit: 10 });
+    document.getElementById("leaderboard").innerHTML = lb.length
+      ? "<table><tr><th>#</th><th>Account</th><th>Balance</th></tr>" + lb.map((r, i) =>
+          `<tr><td>${i + 1}</td><td>${r.account_id}</td><td>${fmt(r.balance)} MVAULT</td></tr>`).join("") + "</table>"
+      : "<p class='muted'>No holders yet.</p>";
+    const duels = await viewFn("get_duels", {});
+    document.getElementById("duels").innerHTML = duels.length ? duels.map((d) => {
+      const open = !d.resolved && Date.now() < Number(BigInt(d.end_time) / 1000000n);
+      return `<div class="card" style="background:#22223a"><b>Duel #${d.id}: ${d.option_a} vs ${d.option_b}</b><br>` +
+        `<span class="muted">Ends: ${shortTime(d.end_time)} · Staked A: ${fmt(d.stakes_a)} · B: ${fmt(d.stakes_b)} · ` +
+        (d.resolved ? `Resolved, winner: ${d.winner === "a" ? d.option_a : d.option_b} 🏆` : open ? "OPEN" : "Ended, awaiting resolve") + `</span><br>` +
+        (open ? `Stake: <input id="stakeAmt${d.id}" placeholder="amount" size="8"> ` +
+          `<button onclick="joinDuel(${d.id},'a')">Back ${d.option_a}</button> ` +
+          `<button onclick="joinDuel(${d.id},'b')">Back ${d.option_b}</button> ` : "") +
+        (!d.resolved && !open ? `<button onclick="resolveDuel(${d.id})">Resolve duel</button>` : "") +
+        `</div>`;
+    }).join("") : "<p class='muted'>No duels yet. Create the first one below.</p>";
+    const props = await viewFn("get_proposals", {});
+    document.getElementById("proposals").innerHTML = props.length ? props.map((p) => {
+      const votingOpen = !p.executed && Date.now() < Number(BigInt(p.end_time) / 1000000n);
+      return `<div class="card" style="background:#22223a"><b>Proposal #${p.id}: ${p.title}</b> — ${p.description || ""}<br>` +
+        `<span class="muted">Payout: ${fmt(p.amount)} MVAULT to ${p.recipient} · Ends: ${shortTime(p.end_time)}<br>` +
+        `Yes: ${fmt(p.yes)} · No: ${fmt(p.no)} · Status: ` +
+        (p.executed ? (p.passed ? "EXECUTED ✅" : "REJECTED ❌") : votingOpen ? "VOTING OPEN" : "Voting ended, awaiting execution") + `</span><br>` +
+        (votingOpen ? `<button onclick="vote(${p.id},'yes')">Vote YES</button> <button onclick="vote(${p.id},'no')" class="secondary">Vote NO</button> ` : "") +
+        (!p.executed && !votingOpen ? `<button onclick="executeProposal(${p.id})">Execute</button>` : "") +
+        `</div>`;
+    }).join("") : "<p class='muted'>No proposals yet.</p>";
+    if (accountId) {
+      const bal = await viewFn("ft_balance_of", { account_id: accountId });
+      const claimed = await viewFn("has_claimed_faucet", { account_id: accountId });
+      document.getElementById("myBalance").innerHTML =
+        `Your balance: <b>${fmt(bal)} MVAULT</b> · Faucet claimed: ${claimed ? "yes" : "no"}`;
+      document.getElementById("faucetBtn").disabled = claimed;
+    }
+  } catch (e) { log("refresh error: " + e.message); }
+}
+
+async function refreshNearStats() {
+  try {
+    const [price, stats] = await Promise.all([
+      fetch("https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd").then((r) => r.json()).catch(() => null),
+      fetch("https://api.nearblocks.io/v1/stats").then((r) => r.json()).catch(() => null),
+    ]);
+    let html = "";
+    if (price && price.near) html += `<span class="stat">NEAR price<b>$${price.near.usd}</b></span>`;
+    if (stats) {
+      const s = stats.stats ? stats.stats[0] : stats;
+      if (s) {
+        if (s.total_supply) html += `<span class="stat">NEAR total supply<b>${(Number(s.total_supply) / 1e24).toFixed(0)}M</b></span>`;
+        if (s.total_txns) html += `<span class="stat">Total txns<b>${Number(s.total_txns).toLocaleString()}</b></span>`;
+        if (s.total_accounts) html += `<span class="stat">Total accounts<b>${Number(s.total_accounts).toLocaleString()}</b></span>`;
+      }
+    }
+    document.getElementById("nearStats").innerHTML = html || "<p class='muted'>Live NEAR stats unavailable right now.</p>";
+  } catch (e) { document.getElementById("nearStats").innerHTML = "<p class='muted'>Live NEAR stats unavailable right now.</p>"; }
+}
+
+async function init() {
+  const config = { networkId: "testnet", nodeUrl: RPC_URL, walletUrl: "https://wallet.testnet.near.org",
+    helperUrl: "https://helper.testnet.near.org", explorerUrl: "https://explorer.testnet.near.org",
+    keyStore: new nearApi.keyStores.BrowserLocalStorageKeyStore() };
+  near = await nearApi.connect(config);
+  wallet = new nearApi.WalletConnection(near, "memevault");
+  provider = near.connection.provider;
+  accountId = wallet.getAccountId();
+  if (accountId) {
+    document.getElementById("walletStatus").textContent = "Connected: " + accountId;
+    document.getElementById("connectBtn").style.display = "none";
+    document.getElementById("disconnectBtn").style.display = "inline";
+    ["registerBtn", "sendBtn", "createDuelBtn", "createPropBtn"].forEach((id) => document.getElementById(id).disabled = false);
+    document.getElementById("faucetBtn").disabled = false;
+    contract = new nearApi.Contract(wallet.account(), CONTRACT_ID, {
+      viewMethods: ["ft_balance_of", "ft_total_supply", "ft_metadata", "get_stats", "get_treasury_balance", "get_leaderboard", "get_duels", "get_duel", "get_proposals", "get_proposal", "get_my_stake", "get_faucet_pool", "has_claimed_faucet", "storage_balance_of"],
+      changeMethods: ["ft_transfer", "storage_deposit", "claim_faucet", "create_duel", "join_duel", "resolve_duel", "create_proposal", "vote", "execute_proposal"],
+    });
+  }
+  await refresh();
+  await refreshNearStats();
+}
+
+document.getElementById("connectBtn").onclick = () => wallet.requestSignIn({ contractId: CONTRACT_ID, methodNames: ["ft_transfer", "storage_deposit", "claim_faucet", "create_duel", "join_duel", "resolve_duel", "create_proposal", "vote", "execute_proposal"] });
+document.getElementById("disconnectBtn").onclick = () => { wallet.signOut(); location.reload(); };
+document.getElementById("registerBtn").onclick = async () => {
+  try { await contract.storage_deposit({}, 1000000000000000000000000n, "2000000000000"); log("Registered storage."); await refresh(); }
+  catch (e) { log("register failed: " + e.message); }
+};
+document.getElementById("faucetBtn").onclick = async () => {
+  try { await contract.claim_faucet({}, 30000000000000n, "100000000000000"); log("Claimed 1,000 MVAULT!"); await refresh(); }
+  catch (e) { log("faucet failed: " + e.message); }
+};
+document.getElementById("sendBtn").onclick = async () => {
+  const to = document.getElementById("toAccount").value.trim();
+  const amt = document.getElementById("sendAmount").value.trim();
+  if (!to || !amt) return log("Enter receiver and amount.");
+  try { await contract.ft_transfer({ receiver_id: to, amount: toYocto(amt) }, 30000000000000n, "1"); log(`Sent ${amt} MVAULT to ${to} (1% fee to treasury).`); await refresh(); }
+  catch (e) { log("transfer failed: " + e.message); }
+};
+document.getElementById("createDuelBtn").onclick = async () => {
+  const a = document.getElementById("duelA").value.trim(), b = document.getElementById("duelB").value.trim();
+  const secs = parseInt(document.getElementById("duelSecs").value, 10) || 3600;
+  if (!a || !b) return log("Enter both meme options.");
+  try { await contract.create_duel({ option_a: a, option_b: b, duration_sec: secs }, 30000000000000n, "0"); log(`Duel created: ${a} vs ${b}.`); await refresh(); }
+  catch (e) { log("create duel failed: " + e.message); }
+};
+window.joinDuel = async (id, side) => {
+  const amt = document.getElementById("stakeAmt" + id).value.trim();
+  if (!amt) return log("Enter a stake amount.");
+  try { await contract.join_duel({ duel_id: id, side, amount: toYocto(amt) }, 30000000000000n, "0"); log(`Staked ${amt} MVAULT on side ${side} of duel #${id}.`); await refresh(); }
+  catch (e) { log("join duel failed: " + e.message); }
+};
+window.resolveDuel = async (id) => {
+  try { await contract.resolve_duel({ duel_id: id }, 30000000000000n, "0"); log(`Duel #${id} resolved.`); await refresh(); }
+  catch (e) { log("resolve failed: " + e.message); }
+};
+document.getElementById("createPropBtn").onclick = async () => {
+  const title = document.getElementById("propTitle").value.trim();
+  const amt = document.getElementById("propAmount").value.trim();
+  const recipient = document.getElementById("propRecipient").value.trim();
+  if (!title || !amt || !recipient) return log("Fill title, amount and recipient.");
+  try { await contract.create_proposal({ title, description: "", amount: toYocto(amt), recipient, duration_sec: 86400 }, 30000000000000n, "0"); log(`Proposal created: ${title}.`); await refresh(); }
+  catch (e) { log("create proposal failed: " + e.message); }
+};
+window.vote = async (id, v) => {
+  try { await contract.vote({ proposal_id: id, vote: v }, 30000000000000n, "0"); log(`Voted ${v} on proposal #${id}.`); await refresh(); }
+  catch (e) { log("vote failed: " + e.message); }
+};
+window.executeProposal = async (id) => {
+  try { await contract.execute_proposal({ proposal_id: id }, 30000000000000n, "0"); log(`Proposal #${id} executed.`); await refresh(); }
+  catch (e) { log("execute failed: " + e.message); }
+};
+init();
+</script>
+</body>
+</html>
