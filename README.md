@@ -64,7 +64,7 @@ The deployer key lives in `~/.near-credentials/testnet/` (never committed). The 
 
 ### Frontend
 
-`frontend/index.html` is a single-page app (plain HTML/JS + `near-api-js` v2 from CDN, no build step). It is deployed via GitHub Pages from `frontend/`. To run locally, serve the folder with any static server, e.g. `npx serve frontend`.
+`docs/index.html` is a single-page app (plain HTML/JS + `near-api-js` v2 from CDN, no build step). It is deployed via GitHub Pages from `docs/`. To run locally, serve the folder with any static server, e.g. `npx serve docs`.
 
 ## Contract API
 
