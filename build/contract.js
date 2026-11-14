@@ -3346,7 +3346,9 @@ let MemeVault = (_dec = NearBindgen({
       const amt = toBig(p.amount);
       if (treasury < amt) throw new Error("Treasury cannot cover this proposal");
       const t = currentAccountId();
-      this._setBalance(t, (treasury - amt).toString());
+      // deduct from the contract's FULL balance (treasury + faucet pool),
+      // not from the treasury figure alone, or the faucet pool accounting breaks
+      this._setBalance(t, (toBig(this._balance(t)) - amt).toString());
       if (!this.registered.get(p.recipient)) this.registered.set(p.recipient, "1");
       this._setBalance(p.recipient, (toBig(this._balance(p.recipient)) + amt).toString());
     }

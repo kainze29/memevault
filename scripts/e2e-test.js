@@ -6,7 +6,7 @@ const { connect, keyStores, utils } = require("near-api-js");
 const fs = require("fs");
 const path = require("path");
 
-const CONTRACT = "memevault-app.testnet";
+const CONTRACT = "memevault-live.testnet";
 const OWNER = "memevault2026.testnet";
 const USER = "memevault-tester.testnet"; // fresh test user (faucet account)
 const MVAULT = 10n ** 18n;
@@ -27,7 +27,7 @@ function check(name, cond, extra) {
 
 async function main() {
   const cred = JSON.parse(
-    fs.readFileSync(path.join(process.env.HOME, ".near-credentials/testnet/memevault-app.testnet.json"), "utf8")
+    fs.readFileSync(path.join(process.env.HOME, ".near-credentials/testnet/memevault-live.testnet.json"), "utf8")
   );
   const keyStore = new keyStores.InMemoryKeyStore();
   for (const id of [CONTRACT, OWNER, USER]) {

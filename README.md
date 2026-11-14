@@ -3,8 +3,8 @@
 **Built at NEAR HACKATHON (Nov 1–14, 2026). Testnet-only project (eligible in all tracks, see HACKATHON.md Q-010).**
 
 - **Live demo:** https://kainze29.github.io/memevault/
-- **Contract (NEAR testnet):** [`memevault-app.testnet`](https://explorer.testnet.near.org/accounts/memevault-app.testnet)
-- **Deploy tx:** [`7bppRsnbjS4NwMW5kqazLYuGBgkw2i5WjvDxBPCwkFUu`](https://explorer.testnet.near.org/transactions/7bppRsnbjS4NwMW5kqazLYuGBgkw2i5WjvDxBPCwkFUu)
+- **Contract (NEAR testnet):** [`memevault-live.testnet`](https://explorer.testnet.near.org/accounts/memevault-live.testnet)
+- **Deploy tx:** [`9SgRF74jZNqpL74n9CrrgtGvtMzyAJeZpvNZaEd6xjuG`](https://explorer.testnet.near.org/transactions/9SgRF74jZNqpL74n9CrrgtGvtMzyAJeZpvNZaEd6xjuG)
 - **Init tx:** [`5CrEgu11YoUCCUz9kqGEUyfBg8KQcrBYtXbkDevZH52R`](https://explorer.testnet.near.org/transactions/5CrEgu11YoUCCUz9kqGEUyfBg8KQcrBYtXbkDevZH52R)
 
 ## What it is
@@ -54,13 +54,13 @@ Every step above is verified end-to-end by `scripts/e2e-test.js` (run it: `node 
 ```sh
 npm install
 node scripts/build-contract.mjs   # rollup + babel, then qjsc + clang -> build/contract.wasm
-node scripts/deploy.js            # deploys to memevault-app.testnet and inits it
+node scripts/deploy.js            # deploys to memevault-live.testnet and inits it
 node scripts/e2e-test.js          # full end-to-end test on testnet
 ```
 
 Build notes: the project uses `near-sdk-js` v2. Its `build` command fails to parse decorators with rollup on this setup, so `scripts/build-contract.mjs` runs the same rollup+babel step directly and then the SDK's `transpileJsAndBuildWasm`. The contract source is `contract/src/index.ts` (TypeScript, near-sdk-js decorators). The init method is named `init`, not `new`, because the bindgen exporter generates `export function <name>` and `new` is a reserved word.
 
-The deployer key lives in `~/.near-credentials/testnet/` (never committed). The contract account is `memevault-app.testnet`; the token owner (holds the minted supply minus the faucet pool) is `memevault2026.testnet`.
+The deployer key lives in `~/.near-credentials/testnet/` (never committed). The contract account is `memevault-live.testnet`; the token owner (holds the minted supply minus the faucet pool) is `memevault2026.testnet`.
 
 ### Frontend
 
